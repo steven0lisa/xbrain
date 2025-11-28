@@ -87,6 +87,124 @@ export async function runAssistant(cfg, emailMeta, sessionIdOverride) {
   return { replyText, replyHtml, attachments: generatedAttachments }
 }
 
+export async function classifyEmail(cfg, emailMeta) {
+  const sessionId = `${Date.now()}-classify-${Math.random().toString(36).slice(2, 6)}`
+  const workDir = path.join(cfg.assistantWorkDir, sessionId)
+  fs.mkdirSync(workDir, { recursive: true })
+  const env = {
+    ...process.env,
+    ANTHROPIC_BASE_URL: cfg.anthropic.baseUrl || '',
+    ANTHROPIC_AUTH_TOKEN: cfg.anthropic.token || '',
+    ANTHROPIC_API_KEY: cfg.anthropic.token || '',
+    ANTHROPIC_SMALL_FAST_MODEL: cfg.anthropic.smallModel || '',
+    ANTHROPIC_MODEL: cfg.anthropic.smallModel || cfg.anthropic.model || '',
+  }
+  const text = String(emailMeta.text || '')
+  const htmlFlag = emailMeta.html ? '(包含HTML)' : ''
+  const prompt = [
+    '你是邮件分类器。判断此邮件是否为广告/营销推广/垃圾邮件。',
+    '输出严格JSON：{"is_ad":true|false,"reason":"<简要>"}',
+    `发件人：${emailMeta.from || ''}`,
+    `主题：${emailMeta.subject || ''}`,
+    htmlFlag,
+    `正文：\n${text.slice(0, 4000)}`,
+  ].join('\n')
+  const bin = expandBin(cfg.claudeBin || 'claude')
+  const args = ['--output-format', 'json', '--allowedTools', 'Read', '--permission-mode', 'acceptEdits', '--dangerously-skip-permissions']
+  let out
+  try {
+    out = await runCmd(bin, args, { cwd: workDir, env }, 90000, prompt)
+  } catch {
+    out = await runCmd('claude', args, { cwd: workDir, env }, 90000, prompt)
+  }
+  try {
+    const obj = JSON.parse(out)
+    if (Array.isArray(obj)) {
+      const last = obj.reverse().find(m => m.type === 'result') || obj[obj.length - 1]
+      const res = last && last.result ? last.result : ''
+      const parsed = JSON.parse(String(res))
+      return !!parsed.is_ad
+    }
+    const parsed = typeof obj.result === 'string' ? JSON.parse(obj.result) : obj
+    return !!parsed.is_ad
+  } catch {
+    try {
+      const m = /"is_ad"\s*:\s*(true|false)/.exec(out)
+      return m ? m[1] === 'true' : false
+    } catch {
+      return false
+    }
+  }
+}
+
+export async function summarizeEmailToKb(cfg, emailMeta, kbDir) {
+  const sessionId = `${Date.now()}-summary-${Math.random().toString(36).slice(2, 6)}`
+  const workDir = path.join(cfg.assistantWorkDir, sessionId)
+  fs.mkdirSync(workDir, { recursive: true })
+  const outPath = path.join(kbDir, 'summary.md')
+  const env = {
+    ...process.env,
+    ANTHROPIC_BASE_URL: cfg.anthropic.baseUrl || '',
+    ANTHROPIC_AUTH_TOKEN: cfg.anthropic.token || '',
+    ANTHROPIC_API_KEY: cfg.anthropic.token || '',
+    ANTHROPIC_SMALL_FAST_MODEL: cfg.anthropic.smallModel || '',
+    ANTHROPIC_MODEL: cfg.anthropic.model || '',
+  }
+  const attList = (emailMeta.attachments || []).map(a => `- ${a.filename}`).join('\n')
+  const prompt = [
+    '生成中文Markdown总结，面向知识库，包含背景、要点、行动项。',
+    `输出目标文件：${outPath}`,
+    '将总结写入该绝对路径文件，不返回其他内容字符串。',
+    `发件人：${emailMeta.from || ''}`,
+    `主题：${emailMeta.subject || ''}`,
+    `正文：\n${String(emailMeta.text || '')}`,
+    emailMeta.html ? '(邮件包含HTML)' : '',
+    '附件列表：\n' + (attList || '无'),
+  ].join('\n')
+  const bin = expandBin(cfg.claudeBin || 'claude')
+  const args = ['--output-format', 'json', '--allowedTools', 'Bash,Read', '--permission-mode', 'acceptEdits', '--dangerously-skip-permissions']
+  try {
+    await runCmd(bin, args, { cwd: workDir, env }, 180000, prompt)
+  } catch {
+    await runCmd('claude', args, { cwd: workDir, env }, 180000, prompt)
+  }
+  return outPath
+}
+
+export async function summarizeAttachmentsToMd(cfg, emailMeta) {
+  const sessionId = `${Date.now()}-atts-${Math.random().toString(36).slice(2, 6)}`
+  const workDir = path.join(cfg.assistantWorkDir, sessionId)
+  fs.mkdirSync(workDir, { recursive: true })
+  const env = {
+    ...process.env,
+    ANTHROPIC_BASE_URL: cfg.anthropic.baseUrl || '',
+    ANTHROPIC_AUTH_TOKEN: cfg.anthropic.token || '',
+    ANTHROPIC_API_KEY: cfg.anthropic.token || '',
+    ANTHROPIC_SMALL_FAST_MODEL: cfg.anthropic.smallModel || '',
+    ANTHROPIC_MODEL: cfg.anthropic.model || '',
+  }
+  const atts = Array.isArray(emailMeta.attachments) ? emailMeta.attachments : []
+  for (const a of atts) {
+    const fp = String(a.path || '')
+    if (!fp) continue
+    const outPath = path.join(path.dirname(fp), `${a.filename || path.basename(fp)}.md`)
+    if (!isParsableAttachment(a)) continue
+    const prompt = [
+      '阅读指定附件内容，生成中文Markdown摘要与要点，适合知识库。',
+      `输入文件：${fp}`,
+      `输出文件：${outPath}`,
+      '将摘要写入输出文件路径，不返回其他内容字符串。',
+    ].join('\n')
+    const bin = expandBin(cfg.claudeBin || 'claude')
+    const args = ['--output-format', 'json', '--allowedTools', 'Bash,Read', '--permission-mode', 'acceptEdits', '--dangerously-skip-permissions']
+    try {
+      await runCmd(bin, args, { cwd: workDir, env }, 180000, prompt)
+    } catch {
+      await runCmd('claude', args, { cwd: workDir, env }, 180000, prompt)
+    }
+  }
+}
+
 function buildPrompt(emailMeta, workDir) {
   const attList = (emailMeta.attachments || []).map(a => `- ${a.filename}`).join('\n')
   const text = emailMeta.text || ''
@@ -324,4 +442,16 @@ function mergeAttachments(primary, secondary) {
     }
   }
   return result
+}
+
+function isParsableAttachment(a) {
+  const name = String(a.filename || '')
+  const ext = path.extname(name || a.path || '').toLowerCase()
+  const okExt = new Set(['.txt', '.md', '.csv', '.json', '.xml', '.html', '.htm', '.pdf', '.docx', '.xlsx', '.pptx'])
+  if (okExt.has(ext)) return true
+  const ct = String(a.contentType || '')
+  if (/text\//.test(ct)) return true
+  if (/application\/(pdf|json)/.test(ct)) return true
+  if (/application\/(vnd\.openxmlformats|msword|vnd\.ms-excel|vnd\.ms-powerpoint)/.test(ct)) return true
+  return false
 }

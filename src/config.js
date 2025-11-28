@@ -36,6 +36,10 @@ export function loadConfig() {
     kbDir: path.resolve('data', 'kb'),
     stateFile: path.resolve('data', 'state.json'),
     assistantWorkDir: path.resolve('data', 'assistant'),
+    mailWhitelist: (requireEnv('MAIL_WHITELIST', '') || '')
+      .split(',')
+      .map(s => s.trim().toLowerCase())
+      .filter(s => s.length > 0),
     anthropic: {
       baseUrl: requireEnv('ANTHROPIC_BASE_URL'),
       token: requireEnv('ANTHROPIC_AUTH_TOKEN'),

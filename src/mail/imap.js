@@ -3,6 +3,7 @@ import path from 'path'
 import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import { logger } from '../logger.js'
+import { classifyEmail, summarizeEmailToKb, summarizeAttachmentsToMd } from '../assistant.js'
 
 export async function fetchNewEmails(cfg, stateRef) {
   const start = Date.now()
@@ -47,6 +48,20 @@ export async function fetchNewEmails(cfg, stateRef) {
               continue
             }
             
+            const fromAddrs = extractAddresses(parsed)
+            const isWhite = isWhitelisted(cfg, fromAddrs)
+            let isAd = false
+            if (!isWhite) {
+              try {
+                isAd = await classifyEmail(cfg, { subject: parsed.subject || '', from: fromAddrs.join(', '), text: parsed.text || '', html: parsed.html || '' })
+              } catch {}
+            }
+            if (isAd) {
+              logger.info('广告邮件已丢弃', { uid, subject: parsed.subject || '', from: fromAddrs.join(', ') })
+              if (uid > (stateRef.lastUid || 0)) stateRef.lastUid = uid
+              continue
+            }
+
             const id = `${(parsed.date || new Date()).toISOString().replace(/[:.]/g, '-')}-${uid}`
             const dir = path.join(cfg.kbDir, id)
             fs.mkdirSync(dir, { recursive: true })
@@ -54,7 +69,7 @@ export async function fetchNewEmails(cfg, stateRef) {
             const metadata = {
               uid,
               subject: parsed.subject || '',
-              from: parsed.from?.text || '',
+              from: parsed.from?.text || fromAddrs.join(', '),
               to: parsed.to?.text || '',
               date: parsed.date?.toISOString() || new Date().toISOString(),
               messageId: parsed.messageId || '',
@@ -64,6 +79,7 @@ export async function fetchNewEmails(cfg, stateRef) {
               text: parsed.text || '',
               html: parsed.html || '',
               attachments: [],
+              summaryPath: '',
             }
 
             if (parsed.attachments?.length) {
@@ -75,6 +91,9 @@ export async function fetchNewEmails(cfg, stateRef) {
               }
             }
 
+            const summaryPath = await summarizeEmailToKb(cfg, metadata, dir)
+            if (summaryPath) metadata.summaryPath = summaryPath
+            await summarizeAttachmentsToMd(cfg, metadata)
             fs.writeFileSync(path.join(dir, 'email.json'), JSON.stringify(metadata, null, 2))
             if (metadata.text) fs.writeFileSync(path.join(dir, 'email.txt'), metadata.text)
             if (metadata.html) fs.writeFileSync(path.join(dir, 'email.html'), metadata.html)
@@ -116,4 +135,24 @@ export async function fetchNewEmails(cfg, stateRef) {
 
 function safeFileName(name) {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_')
+}
+
+function extractAddresses(parsed) {
+  const arr = []
+  try {
+    const v = parsed.from && parsed.from.value ? parsed.from.value : []
+    for (const a of v) if (a && a.address) arr.push(String(a.address).toLowerCase())
+  } catch {}
+  if (!arr.length && parsed.from && parsed.from.text) {
+    const t = String(parsed.from.text)
+    const m = t.match(/[\w.+-]+@[\w.-]+/g)
+    if (m) for (const e of m) arr.push(e.toLowerCase())
+  }
+  return arr
+}
+
+function isWhitelisted(cfg, addrs) {
+  const wl = Array.isArray(cfg.mailWhitelist) ? cfg.mailWhitelist : []
+  for (const a of addrs || []) if (wl.includes(a)) return true
+  return false
 }
