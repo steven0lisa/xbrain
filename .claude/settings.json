@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(document-skills:pptx)",
+      "Bash(python -m markitdown:*)",
+      "Bash(pip install:*)"
+    ],
+    "deny": [
+      "Read(./logs/**)",
+      "Write(./logs/**)",
+      "Read(./data/**)",
+      "Write(./data/**)",
+      "Read(./tmp/**)",
+      "Write(./tmp/**)",
+      "Read(./scripts/**)",
+      "Write(./scripts/**)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./.env.local)",
+      "Write(./.env)",
+      "Write(./.env.*)",
+      "Write(./.env.local)",
+      "Read(./node_modules/**)"
+    ]
+  }
+}

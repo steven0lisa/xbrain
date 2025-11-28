@@ -3,3 +3,15 @@ logs/
 data/
 .env*
 tmp/
+*.log
+*.log.*
+.DS_Store
+*.pem
+*.key
+id_rsa*
+*.crt
+*.p12
+*.der
+*.sqlite*
+*.db*
+.claude/settings.local.json

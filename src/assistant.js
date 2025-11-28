@@ -100,6 +100,7 @@ function buildPrompt(emailMeta, workDir) {
     '- 若需要回复邮件：请在当前工作目录生成回复正文文件，文件名建议 reply_email.html（优先）或 reply_email.md。',
     '- 结果输出格式（严格）：返回JSON对象字符串，包含字段：',
     '  { "reply": "REPLY", "reply_file": "<绝对路径>", "format": "html|md|txt", "attachments": [{"path":"<绝对路径>","filename":"<可选>","contentType":"<可选>"}] }',
+    '- 若引用了文件或邮件作为数据或资料来源，且单个文件大小小于10MB，请将该文件以附件形式随回复邮件一并发送，便于发件人核验信息来源（请在 attachments 中列出绝对路径）。',
     '- 如需附加回复附件，请完整填写 attachments 数组，path 必须是绝对路径；若无需附件可省略该字段或给空数组。',
     '- 若无需回复则只输出字符串 NO_REPLY，不输出其他任何内容。',
     `工作目录：${workDir}`,
